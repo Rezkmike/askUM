@@ -7,7 +7,7 @@ from loguru import logger
 import os
 from dotenv import load_dotenv
 
-from routers import telegram, dashboard, scraping, knowledge
+from routers import telegram, dashboard, scraping, knowledge, auth
 from services.database import init_databases
 from services.redis_client import get_redis_client
 from services.milvus_client import get_milvus_client
@@ -38,13 +38,14 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=["http://localhost:5173", "http://localhost:3000", "https://localhost:5173", "https://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Include routers
+app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
 app.include_router(telegram.router, prefix="/api/telegram", tags=["telegram"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
 app.include_router(scraping.router, prefix="/api/scraping", tags=["scraping"])

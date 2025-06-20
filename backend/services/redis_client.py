@@ -10,9 +10,12 @@ async def init_redis():
     """Initialize Redis connection"""
     global redis_client
     try:
+        redis_url = f"redis://{settings.REDIS_HOST}:{settings.REDIS_PORT}/{settings.REDIS_DB}"
+        if settings.REDIS_PASSWORD:
+            redis_url = f"redis://:{settings.REDIS_PASSWORD}@{settings.REDIS_HOST}:{settings.REDIS_PORT}/{settings.REDIS_DB}"
+            
         redis_client = aioredis.from_url(
-            f"redis://{settings.REDIS_HOST}:{settings.REDIS_PORT}/{settings.REDIS_DB}",
-            password=settings.REDIS_PASSWORD,
+            redis_url,
             decode_responses=True
         )
         await redis_client.ping()
@@ -71,6 +74,10 @@ class ConversationManager:
             await client.delete(key)
         except Exception as e:
             logger.error(f"Error clearing conversation: {e}")
+    
+    async def get_redis_client(self):
+        """Get Redis client for stats"""
+        return await get_redis_client()
 
 class CacheManager:
     """General purpose cache manager"""

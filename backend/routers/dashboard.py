@@ -1,38 +1,42 @@
 from fastapi import APIRouter
 from typing import List, Dict, Any
-from datetime import datetime, timedelta
-import random
+from loguru import logger
+
+from services.dashboard_service import dashboard_service
 
 router = APIRouter()
 
 @router.get("/metrics")
 async def get_dashboard_metrics():
     """Get dashboard metrics"""
-    return {
-        "active_users": 2847,
-        "messages_today": 18392,
-        "avg_response_time": 1.2,
-        "rag_accuracy": 94.7,
-        "change_active_users": "+12.5%",
-        "change_messages": "+8.2%",
-        "change_response_time": "-0.3s",
-        "change_accuracy": "+2.1%"
-    }
+    try:
+        return await dashboard_service.get_system_metrics()
+    except Exception as e:
+        logger.error(f"Error getting dashboard metrics: {e}")
+        return {
+            "active_users": 0,
+            "messages_today": 0,
+            "avg_response_time": 0,
+            "rag_accuracy": 0,
+            "change_active_users": "0%",
+            "change_messages": "0%",
+            "change_response_time": "0s",
+            "change_accuracy": "0%"
+        }
 
 @router.get("/system-status")
 async def get_system_status():
     """Get system status for all services"""
-    return [
-        {"service": "Telegram API", "status": "healthy", "uptime": "99.9%"},
-        {"service": "LLM Service", "status": "healthy", "uptime": "99.7%"},
-        {"service": "Redis Cache", "status": "healthy", "uptime": "100%"},
-        {"service": "Milvus Vector DB", "status": "warning", "uptime": "98.2%"},
-        {"service": "Reranker API", "status": "healthy", "uptime": "99.5%"}
-    ]
+    try:
+        return await dashboard_service.get_system_health()
+    except Exception as e:
+        logger.error(f"Error getting system status: {e}")
+        return []
 
 @router.get("/conversations")
 async def get_recent_conversations():
     """Get recent conversations"""
+    # This would typically fetch from Redis/database
     return [
         {
             "id": 1,
@@ -67,17 +71,8 @@ async def get_recent_conversations():
 @router.get("/activity")
 async def get_activity_data():
     """Get activity data for charts"""
-    # Generate sample data for the last 24 hours
-    now = datetime.now()
-    data = []
-    
-    for i in range(24):
-        timestamp = now - timedelta(hours=i)
-        data.append({
-            "timestamp": timestamp.isoformat(),
-            "messages": random.randint(50, 200),
-            "users": random.randint(20, 80),
-            "response_time": round(random.uniform(0.8, 2.5), 2)
-        })
-    
-    return data[::-1]  # Reverse to get chronological order
+    try:
+        return await dashboard_service.get_activity_data()
+    except Exception as e:
+        logger.error(f"Error getting activity data: {e}")
+        return []

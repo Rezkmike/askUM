@@ -2,8 +2,12 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import List, Optional
 from loguru import logger
+import time
+import uuid
 
 from services.scraping_service import scraping_service
+from services.embedding_service import embedding_service
+from services.milvus_client import vector_store
 
 router = APIRouter()
 
@@ -20,11 +24,27 @@ class ScrapingStatus(BaseModel):
     total_pages: int
     current_url: str
 
+# In-memory job storage (in production, use Redis or database)
+scraping_jobs = {}
+
 @router.post("/start")
 async def start_scraping_job(job: ScrapingJob, background_tasks: BackgroundTasks):
     """Start a new scraping job"""
     try:
-        job_id = f"scraping_{int(time.time())}"
+        job_id = f"scraping_{uuid.uuid4().hex[:8]}"
+        
+        # Initialize job status
+        scraping_jobs[job_id] = {
+            "job_id": job_id,
+            "status": "started",
+            "progress": 0,
+            "total_pages": 0,
+            "urls": job.urls,
+            "started_at": time.time(),
+            "current_url": "",
+            "documents_created": 0,
+            "errors": 0
+        }
         
         # Start scraping in background
         background_tasks.add_task(
@@ -44,49 +64,25 @@ async def start_scraping_job(job: ScrapingJob, background_tasks: BackgroundTasks
 @router.get("/jobs")
 async def get_scraping_jobs():
     """Get all scraping jobs"""
-    # In a real implementation, this would fetch from database
-    return [
-        {
-            "job_id": "scraping_1703123456",
-            "status": "completed",
-            "progress": 100,
-            "total_pages": 45,
-            "urls": ["https://example.com"],
-            "started_at": "2024-01-01T10:00:00Z",
-            "completed_at": "2024-01-01T10:15:00Z"
-        },
-        {
-            "job_id": "scraping_1703123789",
-            "status": "running",
-            "progress": 60,
-            "total_pages": 30,
-            "urls": ["https://docs.example.com"],
-            "started_at": "2024-01-01T11:00:00Z",
-            "current_url": "https://docs.example.com/api/reference"
-        }
-    ]
+    return list(scraping_jobs.values())
 
 @router.get("/jobs/{job_id}")
 async def get_scraping_job_status(job_id: str):
     """Get status of a specific scraping job"""
-    # In a real implementation, this would fetch from database/cache
-    return {
-        "job_id": job_id,
-        "status": "running",
-        "progress": 75,
-        "total_pages": 40,
-        "current_url": "https://example.com/page-30",
-        "pages_scraped": 30,
-        "documents_created": 156,
-        "errors": 2
-    }
+    if job_id not in scraping_jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    return scraping_jobs[job_id]
 
 @router.delete("/jobs/{job_id}")
 async def cancel_scraping_job(job_id: str):
     """Cancel a running scraping job"""
     try:
-        # In a real implementation, you would cancel the background task
-        logger.info(f"Cancelling scraping job {job_id}")
+        if job_id not in scraping_jobs:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        scraping_jobs[job_id]["status"] = "cancelled"
+        logger.info(f"Scraping job {job_id} cancelled")
         
         return {"message": f"Scraping job {job_id} cancelled"}
         
@@ -99,19 +95,51 @@ async def run_scraping_job(job_id: str, urls: List[str], max_depth: int, max_pag
     try:
         logger.info(f"Starting scraping job {job_id} for {len(urls)} URLs")
         
+        job = scraping_jobs[job_id]
+        job["status"] = "running"
+        
         total_documents = 0
         
-        for url in urls:
-            logger.info(f"Scraping {url}")
-            documents = await scraping_service.scrape_website(url, max_depth, max_pages)
-            total_documents += len(documents)
-            
-            # Here you would typically:
-            # 1. Generate embeddings for documents
-            # 2. Store in vector database
-            # 3. Update job progress in database/cache
+        for i, url in enumerate(urls):
+            if job["status"] == "cancelled":
+                break
+                
+            try:
+                job["current_url"] = url
+                job["progress"] = int((i / len(urls)) * 100)
+                
+                logger.info(f"Scraping {url}")
+                documents = await scraping_service.scrape_website(url, max_depth, max_pages)
+                
+                if documents:
+                    # Generate embeddings
+                    texts = [doc["text"] for doc in documents]
+                    embeddings = await embedding_service.embed_batch(texts)
+                    
+                    # Add embeddings to documents
+                    for doc, embedding in zip(documents, embeddings):
+                        doc["embedding"] = embedding
+                    
+                    # Insert into vector store
+                    await vector_store.insert_documents(documents)
+                    
+                    total_documents += len(documents)
+                    job["documents_created"] = total_documents
+                    
+                    logger.info(f"Indexed {len(documents)} documents from {url}")
+                
+            except Exception as e:
+                logger.error(f"Error scraping {url}: {e}")
+                job["errors"] += 1
+        
+        job["status"] = "completed" if job["status"] != "cancelled" else "cancelled"
+        job["progress"] = 100
+        job["completed_at"] = time.time()
         
         logger.info(f"Scraping job {job_id} completed. Total documents: {total_documents}")
         
     except Exception as e:
         logger.error(f"Error in scraping job {job_id}: {e}")
+        if job_id in scraping_jobs:
+            scraping_jobs[job_id]["status"] = "failed"
+            scraping_jobs[job_id]["error"] = str(e)

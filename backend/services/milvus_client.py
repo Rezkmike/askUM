@@ -2,6 +2,7 @@ from pymilvus import connections, Collection, FieldSchema, CollectionSchema, Dat
 from typing import List, Dict, Any
 from loguru import logger
 from utils.config import settings
+import time
 
 milvus_client = None
 COLLECTION_NAME = "knowledge_base"
@@ -15,8 +16,8 @@ async def init_milvus():
             alias="default",
             host=settings.MILVUS_HOST,
             port=settings.MILVUS_PORT,
-            user=settings.MILVUS_USER,
-            password=settings.MILVUS_PASSWORD
+            user=settings.MILVUS_USER or "",
+            password=settings.MILVUS_PASSWORD or ""
         )
         
         # Create collection if it doesn't exist
@@ -82,8 +83,28 @@ class VectorStore:
             collection = get_milvus_client()
             
             # Prepare data for insertion
+            texts = []
+            embeddings = []
+            source_urls = []
+            titles = []
+            chunk_indices = []
+            timestamps = []
+            
+            for doc in documents:
+                texts.append(doc.get("text", ""))
+                embeddings.append(doc.get("embedding", []))
+                source_urls.append(doc.get("source_url", ""))
+                titles.append(doc.get("title", ""))
+                chunk_indices.append(doc.get("chunk_index", 0))
+                timestamps.append(doc.get("timestamp", int(time.time())))
+            
             data = [
-                documents,  # This should be properly formatted for Milvus
+                texts,
+                embeddings,
+                source_urls,
+                titles,
+                chunk_indices,
+                timestamps
             ]
             
             collection.insert(data)
